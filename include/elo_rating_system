@@ -1,0 +1,94 @@
+/* vim: set filetype=cpp: */
+#ifndef TREGANA_ELO_RATING_SYSTEM
+#define TREGANA_ELO_RATING_SYSTEM
+#include <array>
+#include <list>
+#include <memory>
+#include <unordered_set>
+#include <cmath>
+namespace tregana {
+namespace elo {
+template<typename F, typename std::enable_if_t<std::is_floating_point_v<F>> * = nullptr>
+struct rating_system
+{
+  rating_system(F thd, F scale, F val)
+  : matches{}
+  , rates{}
+  , duel_threshold{thd}
+  , scale{scale}
+  , default_value{val}
+  {
+  }
+  struct duel;
+  struct rate {
+    std::list<const duel*> matches;
+    F value;
+  };
+  enum class result { win, draw, loss };
+  struct duel
+  {
+    std::array<rate*, 2> rates;
+    result value;
+  };
+  rate* make_rate()
+  {
+    auto rval{std::make_shared<rate>()};
+    rval->value = default_value;
+    rates.insert(rval);
+    return rval.get();
+  }
+  bool contains(rate*r)
+  {
+    std::shared_ptr<rate> key(std::shared_ptr<rate>(), r);
+    return rates.contains(key);
+  }
+  template<result r>
+  const duel* record(rate*x, rate*y)
+  {
+    if (not contains(x) or not contains(y))
+      return nullptr;
+    const auto cdf{1.0 / (1.0 + std::exp(-(x->value - y->value) / scale))};
+    if constexpr (r == result::draw)
+    {
+      const auto incr{(0.5 - cdf) * duel_threshold};
+      x.value += incr;
+      y.value += incr;
+    }
+    else
+    {
+      const auto incr{(1.0 - cdf) * duel_threshold};
+      const auto decr{cdf * duel_threshold};
+      if constexpr (r == result::win)
+      {
+        x->value += incr;
+        y->value -= decr;
+      }
+      else
+      {
+        x->value -= decr;
+        y->value += incr;
+      }
+    }
+    {
+      auto match = std::make_shared<duel>();
+      match->rates[0] = x;
+      match->rates[1] = y;
+      match->value = r;
+      x->matches.push_back(match.get());
+      y->matches.push_back(match.get());
+      matches.push_back(std::move(match));
+    }
+    return matches.back().get();
+  }
+
+private:
+  static constexpr std::array<F, 3> v{1.0, 0.5, 0.0};
+  std::list<std::shared_ptr<duel>> matches;
+  std::unordered_set<std::shared_ptr<rate>> rates;
+  F duel_threshold;
+  F scale;
+  F default_value;
+};
+}//namespace elo
+}//namespace tregana
+#endif//TREGANA_ELO_RATING_SYSTEM
