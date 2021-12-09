@@ -1,7 +1,7 @@
 /* vim: set filetype=cpp: */
 #ifndef TREGANA_ELO_RATING_SYSTEM
 #define TREGANA_ELO_RATING_SYSTEM
-#include <array>
+#include <vector>
 #include <list>
 #include <memory>
 #include <unordered_set>
@@ -23,40 +23,50 @@ struct rating_system
   struct rate {
     std::list<const duel*> matches;
     F value;
+    auto operator<=>(const rate&rhs) const
+    {
+      return value <=> rhs.value;
+    }
   };
   enum class result { win, draw, loss };
   struct duel
   {
-    std::array<rate*, 2> rates;
+    rate* subject;
+    rate* opponent;
     result value;
   };
   rate* make_rate()
   {
     auto rval{std::make_shared<rate>()};
     rval->value = default_value;
-    rates.insert(rval);
-    return rval.get();
+    if (rates.insert(rval).second)
+      return rval.get();
+    return nullptr;
   }
-  bool contains(rate*r)
+  bool contains(rate*r) const
   {
     std::shared_ptr<rate> key(std::shared_ptr<rate>(), r);
     return rates.contains(key);
+  }
+  bool contains(uintptr_t x) const
+  {
+    return contains(reinterpret_cast<rate*>(x));
   }
   template<result r>
   const duel* record(rate*x, rate*y)
   {
     if (not contains(x) or not contains(y))
       return nullptr;
-    const auto cdf{1.0 / (1.0 + std::exp(-(x->value - y->value) / scale))};
+    const auto cdf{1.0f / (1.0f + std::exp(-(x->value - y->value) / scale))};
     if constexpr (r == result::draw)
     {
-      const auto incr{(0.5 - cdf) * duel_threshold};
+      const auto incr{(0.5f - cdf) * duel_threshold};
       x.value += incr;
       y.value += incr;
     }
     else
     {
-      const auto incr{(1.0 - cdf) * duel_threshold};
+      const auto incr{(1.0f - cdf) * duel_threshold};
       const auto decr{cdf * duel_threshold};
       if constexpr (r == result::win)
       {
@@ -69,20 +79,21 @@ struct rating_system
         y->value += incr;
       }
     }
-    {
-      auto match = std::make_shared<duel>();
-      match->rates[0] = x;
-      match->rates[1] = y;
-      match->value = r;
-      x->matches.push_back(match.get());
-      y->matches.push_back(match.get());
-      matches.push_back(std::move(match));
-    }
-    return matches.back().get();
+    matches.emplace_back(new duel(x,y,r));
+    auto rval{matches.back().get()};
+    x->matches.push_back(rval);
+    y->matches.push_back(rval);
+    return rval;
   }
-
+  std::vector<rate*> rank() const
+  {
+    std::vector<rate*> rval;
+    rval.reserve(rates.size());
+    std::for_each(rates.begin(), rates.end(), [&rval](std::shared_ptr<rate>it) {rval.push_back(it.get());});
+    std::sort(rval.begin(), rval.end(), [](rate*x, rate*y) {return *y < *x;});
+    return rval;
+  }
 private:
-  static constexpr std::array<F, 3> v{1.0, 0.5, 0.0};
   std::list<std::shared_ptr<duel>> matches;
   std::unordered_set<std::shared_ptr<rate>> rates;
   F duel_threshold;
